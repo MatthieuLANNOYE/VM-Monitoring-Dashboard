@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VM Monitor Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --down: #ef4444;
+      --line: #334155;
+      --accent: #38bdf8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, Arial, sans-serif;
+      background: linear-gradient(180deg, #0b1220 0%, #111827 100%);
+      color: var(--text);
+    }
+    .wrap { max-width: 1400px; margin: 0 auto; padding: 24px; }
+    .topbar {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 16px; margin-bottom: 24px;
+    }
+    h1 { margin: 0; font-size: 32px; }
+    .muted { color: var(--muted); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: rgba(17, 24, 39, 0.92);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.18);
+    }
+    .kpi { font-size: 30px; font-weight: 700; margin-top: 10px; }
+    .status-pill {
+      display: inline-block; padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;
+    }
+    .ok { background: rgba(34,197,94,.14); color: #86efac; }
+    .warn { background: rgba(245,158,11,.14); color: #fcd34d; }
+    .down { background: rgba(239,68,68,.14); color: #fca5a5; }
+    .main {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 20px;
+    }
+    table {
+      width: 100%; border-collapse: collapse; margin-top: 10px;
+    }
+    th, td {
+      padding: 12px 10px; border-bottom: 1px solid var(--line); text-align: left; font-size: 14px;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    tr:hover { background: rgba(56,189,248,.05); cursor: pointer; }
+    .meter {
+      height: 10px; background: #0b1220; border-radius: 999px; overflow: hidden; min-width: 110px;
+    }
+    .bar { height: 100%; border-radius: 999px; }
+    .cpu { background: #38bdf8; }
+    .ram { background: #a78bfa; }
+    .disk { background: #f59e0b; }
+    .section-title { margin: 0 0 12px 0; font-size: 18px; }
+    .alerts { display: grid; gap: 10px; }
+    .alert {
+      border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: rgba(15,23,42,.65);
+    }
+    .refresh { color: var(--muted); font-size: 13px; }
+    canvas { max-height: 320px; }
+    
+    /* Modal */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.8);
+    }
+    .modal-content {
+      background-color: var(--panel);
+      margin: 5% auto;
+      padding: 30px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      width: 80%;
+      max-width: 900px;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .close {
+      color: var(--muted);
+      float: right;
+      font-size: 28px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .close:hover { color: var(--text); }
+    
+    .disk-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      align-items: center;
+    }
+    .disk-item:last-child { border-bottom: none; }
+    .disk-path { 
+      font-family: monospace;
+      color: var(--accent);
+      flex: 1;
+    }
+    .disk-size {
+      font-weight: 700;
+      font-size: 16px;
+      margin-left: 20px;
+    }
+    
+    .action-btn {
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      margin-left: 8px;
+    }
+    .action-btn:hover {
+      background: rgba(56, 189, 248, 0.2);
+    }
+    
+    @media (max-width: 980px) {
+      .main { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <h1>VM Monitor Dashboard</h1>
+        <div class="muted">Supervision des VM N7 en temps réel via FastAPI + SSH</div>
+      </div>
+      <div class="refresh" id="lastRefresh">Chargement...</div>
+    </div>
+
+    <div class="grid">
+      <div class="card"><div class="muted">VMs configurées</div><div class="kpi" id="kpiTotal">0</div></div>
+      <div class="card"><div class="muted">VMs UP</div><div class="kpi" id="kpiUp">0</div></div>
+      <div class="card"><div class="muted">VMs DOWN</div><div class="kpi" id="kpiDown">0</div></div>
+      <div class="card"><div class="muted">Charge moyenne CPU</div><div class="kpi" id="kpiCpu">0%</div></div>
+    </div>
+
+    <div class="main">
+      <div>
+        <div class="card" style="margin-bottom:20px;">
+          <h2 class="section-title">État des VMs</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Nom</th>
+                <th>IP</th>
+                <th>Statut</th>
+                <th>CPU</th>
+                <th>RAM</th>
+                <th>Disque</th>
+                <th>Uptime</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="vmTableBody"></tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <h2 class="section-title">CPU par VM</h2>
+          <canvas id="cpuChart"></canvas>
+        </div>
+      </div>
+
+      <div>
+        <div class="card" style="margin-bottom:20px;">
+          <h2 class="section-title">Alertes</h2>
+          <div class="alerts" id="alerts"></div>
+        </div>
+        <div class="card">
+          <h2 class="section-title">Résumé</h2>
+          <div id="summary" class="muted">En attente des données...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal pour l'historique CPU/RAM -->
+  <div id="historyModal" class="modal">
+    <div class="modal-content">
+      <span class="close" onclick="closeHistoryModal()">&times;</span>
+      <h2 id="modalTitle">Historique</h2>
+      <canvas id="historyChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Modal pour l'analyse disque -->
+  <div id="diskModal" class="modal">
+    <div class="modal-content">
+      <span class="close" onclick="closeDiskModal()">&times;</span>
+      <h2 id="diskModalTitle">Analyse du disque</h2>
+      <div id="diskContent">
+        <div class="muted">Chargement...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let cpuChart;
+    let historyChart;
+    let currentVMs = [];
+
+    function fmtPct(v) {
+      return `${Number(v).toFixed(1)}%`;
+    }
+
+    function meter(value, cls) {
+      const safe = Math.max(0, Math.min(100, Number(value || 0)));
+      return `<div class="meter"><div class="bar ${cls}" style="width:${safe}%"></div></div>`;
+    }
+
+    function pill(status) {
+      if (status === 'up') return '<span class="status-pill ok">UP</span>';
+      return '<span class="status-pill down">DOWN</span>';
+    }
+
+    function updateChart(data) {
+      const labels = data.map(vm => vm.name);
+      const values = data.map(vm => Number(vm.cpu || 0));
+      if (cpuChart) cpuChart.destroy();
+      cpuChart = new Chart(document.getElementById('cpuChart'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'CPU %',
+            data: values,
+            backgroundColor: values.map(v => v >= 85 ? '#ef4444' : v >= 70 ? '#f59e0b' : '#38bdf8'),
+            borderRadius: 8
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: { beginAtZero: true, max: 100, ticks: { color: '#cbd5e1' }, grid: { color: '#334155' } },
+            x: { ticks: { color: '#cbd5e1' }, grid: { display: false } }
+          }
+        }
+      });
+    }
+
+    async function showHistory(vmHost, vmName) {
+      try {
+        const res = await fetch(`/api/history/${vmHost}`);
+        const history = await res.json();
+        
+        if (!history || history.length === 0) {
+          alert('Pas encore d\'historique pour cette VM');
+          return;
+        }
+
+        const labels = history.map(h => new Date(h.timestamp * 1000).toLocaleTimeString('fr-FR'));
+        const cpuData = history.map(h => h.cpu);
+        const ramData = history.map(h => h.ram);
+
+        document.getElementById('modalTitle').textContent = `Historique - ${vmName}`;
+        document.getElementById('historyModal').style.display = 'block';
+
+        if (historyChart) historyChart.destroy();
+        historyChart = new Chart(document.getElementById('historyChart'), {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [
+              {
+                label: 'CPU %',
+                data: cpuData,
+                borderColor: '#38bdf8',
+                backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                tension: 0.4
+              },
+              {
+                label: 'RAM %',
+                data: ramData,
+                borderColor: '#a78bfa',
+                backgroundColor: 'rgba(167, 139, 250, 0.1)',
+                tension: 0.4
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { labels: { color: '#cbd5e1' } }
+            },
+            scales: {
+              y: { 
+                beginAtZero: true, 
+                max: 100, 
+                ticks: { color: '#cbd5e1' }, 
+                grid: { color: '#334155' } 
+              },
+              x: { 
+                ticks: { color: '#cbd5e1' }, 
+                grid: { color: '#334155' } 
+              }
+            }
+          }
+        });
+      } catch (e) {
+        alert('Erreur lors du chargement de l\'historique');
+      }
+    }
+
+    async function showDiskDetails(vmHost, vmName) {
+      document.getElementById('diskModalTitle').textContent = `Analyse disque - ${vmName}`;
+      document.getElementById('diskContent').innerHTML = '<div class="muted">Chargement...</div>';
+      document.getElementById('diskModal').style.display = 'block';
+      
+      try {
+        const res = await fetch(`/api/disk/${vmHost}`);
+        const data = await res.json();
+        
+        if (!data.top_dirs || data.top_dirs.length === 0) {
+          document.getElementById('diskContent').innerHTML = '<div class="muted">Aucune donnée disponible</div>';
+          return;
+        }
+
+        const html = `
+          <h3 class="section-title" style="margin-top: 20px;">Top 5 des répertoires les plus volumineux</h3>
+          <div>
+            ${data.top_dirs.map(dir => `
+              <div class="disk-item">
+                <div class="disk-path">${dir.path}</div>
+                <div class="disk-size">${dir.size_gb} GB</div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+        
+        document.getElementById('diskContent').innerHTML = html;
+      } catch (e) {
+        document.getElementById('diskContent').innerHTML = `<div class="alert">Erreur lors du chargement : ${e.message}</div>`;
+      }
+    }
+
+    async function loadMetrics() {
+      try {
+        const res = await fetch('/api/metrics');
+        const data = await res.json();
+        currentVMs = data;
+
+        const tbody = document.getElementById('vmTableBody');
+        tbody.innerHTML = data.map(vm => `
+          <tr>
+            <td>${vm.name}</td>
+            <td>${vm.host}</td>
+            <td>${pill(vm.status)}</td>
+            <td>${meter(vm.cpu, 'cpu')}<div class="muted">${fmtPct(vm.cpu)}</div></td>
+            <td>${meter(vm.ram, 'ram')}<div class="muted">${fmtPct(vm.ram)}</div></td>
+            <td>${meter(vm.disk, 'disk')}<div class="muted">${fmtPct(vm.disk)}</div></td>
+            <td>${vm.uptime}</td>
+            <td>
+              <button class="action-btn" onclick="showHistory('${vm.host}', '${vm.name}')">📊 Histo</button>
+              <button class="action-btn" onclick="showDiskDetails('${vm.host}', '${vm.name}')">💾 Disque</button>
+            </td>
+          </tr>
+        `).join('');
+
+        const total = data.length;
+        const up = data.filter(v => v.status === 'up').length;
+        const down = total - up;
+        const avgCpu = total ? data.reduce((a,b) => a + Number(b.cpu || 0), 0) / total : 0;
+
+        document.getElementById('kpiTotal').textContent = total;
+        document.getElementById('kpiUp').textContent = up;
+        document.getElementById('kpiDown').textContent = down;
+        document.getElementById('kpiCpu').textContent = `${avgCpu.toFixed(1)}%`;
+        document.getElementById('lastRefresh').textContent = `Dernière mise à jour : ${new Date().toLocaleTimeString('fr-FR')}`;
+
+        const alerts = data.filter(v => v.status !== 'up' || v.cpu >= 85 || v.ram >= 90 || v.disk >= 90);
+        document.getElementById('alerts').innerHTML = alerts.length
+          ? alerts.map(vm => `<div class="alert"><strong>${vm.name}</strong><div class="muted">${vm.status !== 'up' ? (vm.error || 'VM inaccessible') : `CPU ${fmtPct(vm.cpu)} | RAM ${fmtPct(vm.ram)} | Disk ${fmtPct(vm.disk)}`}</div></div>`).join('')
+          : '<div class="muted">Aucune alerte active</div>';
+
+        document.getElementById('summary').innerHTML = `
+          <div>Total : <strong>${total}</strong></div>
+          <div>Disponibles : <strong>${up}</strong></div>
+          <div>Indisponibles : <strong>${down}</strong></div>
+          <div>CPU moyen : <strong>${avgCpu.toFixed(1)}%</strong></div>
+        `;
+
+        updateChart(data);
+      } catch (e) {
+        document.getElementById('summary').textContent = 'Erreur de chargement du dashboard';
+        document.getElementById('alerts').innerHTML = `<div class="alert">Impossible de charger /api/metrics : ${e}</div>`;
+      }
+    }
+
+    function closeHistoryModal() {
+      document.getElementById('historyModal').style.display = 'none';
+    }
+
+    function closeDiskModal() {
+      document.getElementById('diskModal').style.display = 'none';
+    }
+
+    window.onclick = function(event) {
+      const historyModal = document.getElementById('historyModal');
+      const diskModal = document.getElementById('diskModal');
+      if (event.target == historyModal) {
+        closeHistoryModal();
+      }
+      if (event.target == diskModal) {
+        closeDiskModal();
+      }
+    }
+
+    loadMetrics();
+    setInterval(loadMetrics, 15000);
+  </script>
+</body>
+</html>
